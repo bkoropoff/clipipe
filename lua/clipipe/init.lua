@@ -43,6 +43,18 @@ local defaults = {
 
 local config = defaults
 
+-- Delayed notify
+local function notify(msg, level)
+    vim.schedule(function()
+        if type(level) == 'string' then
+            -- Bypass vim.notify, go straight to messages
+            vim.api.nvim_echo({{msg, level}}, true, {})
+        else
+            vim.notify(msg, level)
+        end
+    end)
+end
+
 -- Start background process if not already running
 local function start()
     if state.proc then
@@ -64,7 +76,7 @@ local function start()
             stderr = true,
             stdout = function(err, data)
                 if err then
-                    vim.notify("clipipe: stdout error: " .. err, vim.log.levels.ERROR)
+                    notify("clipipe: stdout error: " .. err, vim.log.levels.ERROR)
                     return
                 end
                 if data then
@@ -87,7 +99,7 @@ local function start()
         function(obj)
             if obj.code ~= 0 then
                 local stderr = obj.stderr
-                vim.notify(
+                notify(
                     "clipipe: Process exited with code " ..
                     obj.code .. (stderr and (": " .. stderr:gsub('%s*$', '')) or ""),
                     vim.log.levels.ERROR)
@@ -116,7 +128,7 @@ local function transact(request)
         return nil, err
     end
 
-    if state.request then
+    if state.request or state.response then
         return nil, "Overlapped request attempted"
     end
     state.request = true
@@ -125,16 +137,17 @@ local function transact(request)
         state.proc:write(vim.json.encode(request) .. "\n")
     end)
     if not ok then
+        state.request = false
         return nil, err or "Unknown error"
     end
 
     ok = vim.wait(config.timeout, function() return state.response end, config.interval)
     if not ok then
-        local proc = state.proc
-        state.proc = nil
-        if proc then
-            proc:kill('TERM')
+        if state.proc then
+            state.proc:kill('TERM')
+            state.proc:wait(100)
         end
+        state.request = false
         return nil, "Timeout waiting for response"
     end
 
@@ -300,12 +313,7 @@ function M.copy(lines, reg)
     local request = { action = "copy", data = data, clipboard = reg_to_clipboard[reg] }
     local response, err = transact(request)
     if not response then
-        -- An actual error notification ({err = true}, or with vim.notify) will
-        -- cause the clipboard provider to return bad data, so just use the
-        -- ErrorMsg highlight instead
-        vim.api.nvim_echo(
-            { { "clipipe: copy failed: " .. (err or "Unknown error"), "ErrorMsg" } }, true,
-            {})
+        notify("clipipe: copy failed: " .. (err or "Unknown error"), "ErrorMsg")
     end
 end
 
@@ -314,10 +322,7 @@ function M.paste(reg)
     local request = { action = "paste", clipboard = reg_to_clipboard[reg] }
     local response, err = transact(request)
     if not response then
-        vim.api.nvim_echo(
-            { { "clipipe: paste failed: " .. (err or "Unknown error"), "ErrorMsg" } },
-            true,
-            {})
+        notify("clipipe: paste failed: " .. (err or "Unknown error"), "ErrorMsg")
         return {}
     end
     return vim.split(response.data, "\n", { plain = true })
