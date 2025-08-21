@@ -273,7 +273,7 @@ local function download_bin()
     local path = win_clipipe_bin()
 
     vim.fn.mkdir(vim.fn.fnamemodify(path, ':h'), "p")
-    vim.notify("clippipe: Downloading binary...", vim.log.levels.INFO)
+    vim.notify("clipipe: Downloading binary...", vim.log.levels.INFO)
     local res = vim.system(
         { curl, '--no-progress-meter', '-f', '-L', '-o', path, url },
         { stderr = true }):wait()
