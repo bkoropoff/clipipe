@@ -1,0 +1,88 @@
+name: Build and Release Rust Package
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # Trigger on tags like v1.0.0
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # Check out the repository
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # Set up Rust toolchain
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      # Cache Rust dependencies
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Build the Rust package
+      - name: Build
+        run: cargo build --release
+        env:
+          # Statically link CRT
+          RUSTFLAGS: '-C target-feature=+crt-static'
+
+      # Upload the executable as an artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipipe.exe
+          path: target/release/clipipe.exe
+          if-no-files-found: error
+
+  create-draft-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      # Download the built executable
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: clipipe.exe
+          path: artifacts/
+
+      # Create a draft release
+      - name: Create Draft Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          draft: true
+          prerelease: false
+          body: |
+            Draft release for ${{ github.ref_name }}.
+            Please review the artifacts before publishing.
+
+      # Upload the executable to the draft release
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/clipipe.exe
+          asset_name: clipipe.exe
+          asset_content_type: application/octet-stream
