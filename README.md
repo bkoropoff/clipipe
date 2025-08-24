@@ -15,8 +15,8 @@ communicates over pipes with a persistent background process.
 
 - **Neovim**: Version 0.10+
 - **Rust/Cargo**: Required for building the `clipipe` binary from source
-  (optional on Windows).
-- **curl**: Required for downloading the pre-built binary on Windows/WSL.
+  (optional).
+- **curl**: Required for downloading the pre-built binary.
 
 ## Installation
 
@@ -68,10 +68,11 @@ The plugin attempts to locate the `clipipe` binary using the following steps:
 1. **Path**: Looks for `clipipe` (or `clipipe.exe` on Windows/WSL) in your
    `PATH`, unless overridden by the `path` option to `setup`.  The binary is
    only used if it is runnable and the version matches the plugin.
-2. **Download** (Windows/WSL): Downloads an executable from GitHub releases to
-   `%LOCALAPPDATA%\clipipe` (if `download = true`)
-3. **Build from source** (Windows/Linux): Tries to use `cargo` to build the
-   bundled source code (if `build = true`)
+2. **Download**: Downloads a binary from GitHub releases to
+   `%LOCALAPPDATA%\clipipe` (Windows/WSL) or the plugin directory (if `download
+   = true`)
+3. **Build from source** (Not WSL): Tries to use `cargo` to build the bundled
+   source code (if `build = true`)
 
 If these fail, you will receive an error message during `setup`.
 
