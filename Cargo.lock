@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "clipipe"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clipboard-win",
  "serde_json",
