@@ -1,4 +1,4 @@
-name: Build and Release Rust Package
+name: Build and Release
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-
     steps:
       # Check out the repository
       - name: Check out code
@@ -49,40 +48,63 @@ jobs:
           path: target/release/clipipe.exe
           if-no-files-found: error
 
-  create-draft-release:
-    needs: build-windows
+  build-linux:
     runs-on: ubuntu-latest
-
     steps:
-      # Download the built executable
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: clipipe.exe
-          path: artifacts/
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: musl-tools
+          version: 1.0
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo- name: Install musl-tools
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build
+        run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Rename binary
+        run: cp -l target/x86_64-unknown-linux-musl/release/clipipe clipipe-linux-x86_64
+      - name: Strip binary
+        run: strip clipipe-linux-x86_64
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipipe-linux-x86_64
+          path: clipipe-linux-x86_64
+          if-no-files-found: error
+
+  create-draft-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      # Download the built executables
+      - name: Download Artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts/
+          merge-multiple: true
       # Create a draft release
       - name: Create Draft Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
+          files: artifacts/*
           draft: true
-          prerelease: false
-          body: |
-            Draft release for ${{ github.ref_name }}.
-            Please review the artifacts before publishing.
-
-      # Upload the executable to the draft release
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: artifacts/clipipe.exe
-          asset_name: clipipe.exe
-          asset_content_type: application/octet-stream
