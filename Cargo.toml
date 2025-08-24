@@ -1,6 +1,6 @@
 [package]
 name = "clipipe"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Brian Koropoff <bkoropoff@gmail.com>"]
 description = "A persistent clipboard provider for Neovim"
@@ -9,11 +9,11 @@ readme = "README.md"
 repository = "https://github.com/bkoropoff/clipipe"
 
 [dependencies]
-serde_json = "1.0"
+serde_json = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-clipboard-win = "5.4"
+clipboard-win = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-wl-clipboard-rs = "0.9"
-x11-clipboard = "0.9"
+wl-clipboard-rs = "0"
+x11-clipboard = "0"
