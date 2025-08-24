@@ -1,8 +1,17 @@
 local M = {}
 
--- Format string for Windows clipipe executable download
-local github_win_url =
-    'https://github.com/bkoropoff/clipipe/releases/download/v%s/clipipe.exe'
+-- Format string for clipipe binary download
+local github_rel_url =
+    'https://github.com/bkoropoff/clipipe/releases/download/v%s/clipipe%s'
+-- Map for determining release suffix for system
+local system_map = {
+    linux = {
+        x86_64 = "-linux-x86_64"
+    },
+    windows_nt = {
+        x86_64 = ".exe"
+    }
+}
 -- Location where this plugin was checked out
 local init_lua_path = debug.getinfo(1, "S").source:sub(2)
 local plugin_path = vim.fs.normalize(vim.fs.dirname(init_lua_path) .. '/../..')
@@ -199,18 +208,22 @@ local function win_localappdata()
 end
 
 -- Get default clipipe.exe location
-local function win_clipipe_bin()
-    return win_localappdata() .. '/clipipe/clipipe.exe'
+local function download_path()
+    if is_win then
+        return win_localappdata() .. '/clipipe/clipipe.exe'
+    else
+        return plugin_path .. '/clipipe'
+    end
 end
 
 -- Find clipipe binary
 local function find_bin()
     if config.path and config.path ~= '' and vim.uv.fs_stat(config.path) then
         return config.path
-    elseif not is_wsl and vim.uv.fs_stat(cargo_release_bin) then
+    elseif vim.uv.fs_stat(cargo_release_bin) then
         return cargo_release_bin
-    elseif is_win then
-        local path = win_clipipe_bin()
+    else
+        local path = download_path()
         if vim.uv.fs_stat(path) then
             return path
         end
@@ -276,14 +289,18 @@ end
 
 -- Attempt to download prebuilt clipipe binary
 local function download_bin()
-    if not is_win then
-        -- Prebuilt binaries are only available for Windows
+    local info = vim.uv.os_uname()
+    local os = is_wsl and "windows_nt" or info.sysname:lower()
+    local cpu = info.machine
+    local suffix = (system_map[os] or {})[cpu]
+    if not suffix then
+        -- Prebuilt binary not available
         return nil
     end
 
-    local url = github_win_url:format(version())
-    local curl = is_wsl and "curl" or "curl.exe"
-    local path = win_clipipe_bin()
+    local url = github_rel_url:format(version(), suffix)
+    local curl = is_win_native and "curl.exe" or "curl"
+    local path = download_path()
 
     vim.fn.mkdir(vim.fn.fnamemodify(path, ':h'), "p")
     vim.notify("clipipe: Downloading binary...", vim.log.levels.INFO)
@@ -297,6 +314,10 @@ local function download_bin()
             (stderr and (': ' .. stderr:gsub('%s*$', '')) or ''),
             vim.log.levels.ERROR)
         return nil
+    end
+
+    if not is_win then
+        vim.uv.fs_chmod(path, 448)
     end
 
     return path
