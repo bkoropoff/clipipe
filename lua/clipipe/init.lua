@@ -325,13 +325,13 @@ end
 
 local reg_to_clipboard = {
     ['+'] = "clipboard",
-    ['*'] = "default"
+    ['*'] = "primary"
 }
 
 -- Copy function suitable for g:clipboard
-function M.copy(lines, reg)
+function M.copy(lines, dest)
     local data = table.concat(lines, "\n")
-    local request = { action = "copy", data = data, clipboard = reg_to_clipboard[reg] }
+    local request = { action = "copy", data = data, clipboard = reg_to_clipboard[dest] or dest }
     local response, err = transact(request)
     if not response then
         notify("clipipe: copy failed: " .. (err or "Unknown error"), "ErrorMsg")
@@ -339,8 +339,8 @@ function M.copy(lines, reg)
 end
 
 -- Paste function suitable for g:clipboard
-function M.paste(reg)
-    local request = { action = "paste", clipboard = reg_to_clipboard[reg] }
+function M.paste(source)
+    local request = { action = "paste", clipboard = reg_to_clipboard[source] or source }
     local response, err = transact(request)
     if not response then
         notify("clipipe: paste failed: " .. (err or "Unknown error"), "ErrorMsg")
