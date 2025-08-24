@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::env;
 use std::io::{self, BufRead, Write};
 
@@ -13,8 +13,12 @@ use std::io::Read;
 use std::time::Duration;
 #[cfg(target_os = "linux")]
 use wl_clipboard_rs::{
-    copy::{MimeType as CopyMimeType, Options, Source},
-    paste::{get_contents, ClipboardType, Error as PasteError, MimeType as PasteMimeType, Seat},
+    copy::{ClipboardType as CopyClipboardType, MimeType as CopyMimeType, Options, Source},
+    paste::{
+        get_contents, ClipboardType as PasteClipboardType, Error as PasteError,
+        MimeType as PasteMimeType, Seat,
+    },
+    utils::is_primary_selection_supported,
 };
 #[cfg(target_os = "linux")]
 use x11_clipboard::{Atom, Clipboard as X11Clipboard};
@@ -23,7 +27,7 @@ const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
 enum Clipboard {
     #[cfg(target_os = "linux")]
-    Wayland,
+    Wayland(bool),
     #[cfg(target_os = "linux")]
     X11(X11Clipboard),
     #[cfg(target_os = "windows")]
@@ -37,6 +41,37 @@ impl Clipboard {
             None | Some("default" | "primary") => cb.setter.atoms.primary,
             Some("clipboard") => cb.setter.atoms.clipboard,
             Some(name) => return Err(format!("No such X11 clipboard: {}", name)),
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn copy_clipboard_type(
+        name: Option<&str>,
+        primary_supported: bool,
+    ) -> Result<CopyClipboardType, String> {
+        Ok(match name {
+            // The regular clipboard seems to be "default" on Wayland (e.g. wl-paste)
+            None | Some("default" | "clipboard") => CopyClipboardType::Regular,
+            Some("primary") if primary_supported => CopyClipboardType::Primary,
+            Some("both") if primary_supported => CopyClipboardType::Both,
+            // Silently fall back to regular clipboard for compatibility
+            Some("primary" | "both") if !primary_supported => CopyClipboardType::Regular,
+            Some(name) => return Err(format!("No such Wayland clipboard: {}", name)),
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn paste_clipboard_type(
+        name: Option<&str>,
+        primary_supported: bool,
+    ) -> Result<PasteClipboardType, String> {
+        Ok(match name {
+            // "Primary" seems to be an extension on Wayland and shouldn't be the default
+            None | Some("default" | "clipboard") => PasteClipboardType::Regular,
+            Some("primary") if primary_supported => PasteClipboardType::Primary,
+            // Silently fall back to regular clipboard for compatibility
+            Some("primary") if !primary_supported => PasteClipboardType::Regular,
+            Some(name) => return Err(format!("No such Wayland clipboard: {}", name)),
         })
     }
 
@@ -63,9 +98,13 @@ impl Clipboard {
                         .map_err(|e| e.to_string())?;
                     }
                     #[cfg(target_os = "linux")]
-                    Clipboard::Wayland => {
-                        Options::new()
-                            .copy(Source::Bytes(data.as_bytes().into()), CopyMimeType::Text)?;
+                    Clipboard::Wayland(primary_supported) => {
+                        let mut opts = Options::new();
+                        opts.clipboard(Clipboard::copy_clipboard_type(
+                            json.get("clipboard").and_then(|v| v.as_str()),
+                            primary_supported,
+                        )?);
+                        opts.copy(Source::Bytes(data.as_bytes().into()), CopyMimeType::Text)?;
                     }
                     #[cfg(target_os = "linux")]
                     Clipboard::X11(ref mut cb) => {
@@ -80,7 +119,7 @@ impl Clipboard {
                 Ok(json!({"success": true}))
             }
             Some("paste") => {
-                let data = match *self {
+                let (mut data, mime): (String, Option<String>) = match *self {
                     #[cfg(target_os = "windows")]
                     Clipboard::Windows(convert) => {
                         let data: String = match get_clipboard(formats::Unicode) {
@@ -89,27 +128,31 @@ impl Clipboard {
                             Err(e) => return Err(e.to_string().into()),
                         };
                         if convert {
-                            data.replace("\r\n", "\n")
+                            (data.replace("\r\n", "\n"), None)
                         } else {
-                            data
+                            (data, None)
                         }
                     }
                     #[cfg(target_os = "linux")]
-                    Clipboard::Wayland => match get_contents(
-                        ClipboardType::Regular,
+                    Clipboard::Wayland(primary_supported) => match get_contents(
+                        Clipboard::paste_clipboard_type(
+                            json.get("clipboard").and_then(|v| v.as_str()),
+                            primary_supported,
+                        )?,
                         Seat::Unspecified,
-                        PasteMimeType::Text,
+                        // FIXME: this is not flexible enough, need to inspect offer types manually
+                        PasteMimeType::TextWithPriority("text/plain"),
                     ) {
-                        Ok((mut pipe, _)) => {
+                        Ok((mut pipe, mime)) => {
                             let mut contents = vec![];
                             pipe.read_to_end(&mut contents)?;
-                            String::from_utf8(contents)?
+                            (String::from_utf8(contents)?, Some(mime))
                         }
                         Err(
                             PasteError::ClipboardEmpty
                             | PasteError::NoSeats
                             | PasteError::NoMimeType,
-                        ) => "".into(),
+                        ) => ("".into(), None),
                         Err(err) => return Err(err.into()),
                     },
                     #[cfg(target_os = "linux")]
@@ -124,14 +167,22 @@ impl Clipboard {
                             cb.setter.atoms.property,
                             Duration::from_millis(100),
                         )?;
-                        String::from_utf8(contents)?
+                        (String::from_utf8(contents)?, None)
                     }
                 };
 
-                Ok(json!({
-                    "success": true,
-                    "data": data
-                }))
+                let mut res = Map::new();
+                if let Some(mime) = mime {
+                    // HACK: ignore weird internal types from Firefox
+                    if mime.starts_with("text/_moz") {
+                        data = "".into()
+                    } else {
+                        res.insert("mime".into(), Value::String(mime));
+                    }
+                }
+                res.insert("success".into(), Value::Bool(true));
+                res.insert("data".into(), Value::String(data));
+                Ok(Value::Object(res))
             }
             _ => Err("Invalid or missing action".into()),
         }
@@ -159,7 +210,7 @@ fn main() -> io::Result<()> {
     let mut clipboard = Clipboard::Windows(!env::args().any(|arg| arg == "--keep-line-endings"));
     #[cfg(target_os = "linux")]
     let mut clipboard = if have_env_var("WAYLAND_DISPLAY") {
-        Clipboard::Wayland
+        Clipboard::Wayland(is_primary_selection_supported().is_ok())
     } else if have_env_var("DISPLAY") {
         Clipboard::X11(X11Clipboard::new().map_err(|e| Error::new(ErrorKind::Other, e))?)
     } else {
