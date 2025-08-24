@@ -34,7 +34,7 @@ impl Clipboard {
     #[cfg(target_os = "linux")]
     fn clipboard_atom(cb: &X11Clipboard, name: Option<&str>) -> Result<Atom, String> {
         Ok(match name {
-            None | Some("default") => cb.setter.atoms.primary,
+            None | Some("default" | "primary") => cb.setter.atoms.primary,
             Some("clipboard") => cb.setter.atoms.clipboard,
             Some(name) => return Err(format!("No such X11 clipboard: {}", name)),
         })
