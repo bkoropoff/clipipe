@@ -29,17 +29,16 @@ Install this repository with your manager of choice.  For example, using
 require 'lazy'.setup {
   {
     'bkoropoff/clipipe.nvim',
-    config = function()
-      require 'clipipe'.setup {
-        -- Optional configuration, defaults shown here:
-        path = "...", -- clipipe binary, searches PATH by default
-        keep_line_endings = false, -- Set to true to disable \r\n conversion on Windows
-        enable = true, -- Automatically set g:clipboard to enable clipipe
-        timeout = 1000, -- Timeout for responses from background process (ms)
-        interval = 10, -- Polling interval for responses (ms)
-        download = true, -- Download pre-built binary for Windows/WSL if needed
-        build = true, -- Build from source if needed
-      }
+    opts = {
+      -- Optional configuration, defaults shown here:
+      path = nil, -- clipipe binary
+      keep_line_endings = false, -- Set to true to disable \r\n conversion on Windows
+      enable = true, -- Automatically set g:clipboard to enable clipipe
+      timeout = 1000, -- Timeout for responses from background process (ms)
+      interval = 10, -- Polling interval for responses (ms)
+      download = true, -- Download pre-built binary if needed
+      build = true, -- Build from source if needed
+    }
     end,
   },
 }

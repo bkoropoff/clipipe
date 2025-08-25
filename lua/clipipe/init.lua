@@ -34,8 +34,7 @@ local state = {}
 
 -- Default configuration
 local defaults = {
-    -- Find clipipe in PATH
-    path = vim.fn.exepath(is_win and "clipipe.exe" or "clipipe"),
+    path = nil,
     -- Convert line endings on Windows
     keep_line_endings = false,
     -- Enable on setup
@@ -218,15 +217,16 @@ end
 
 -- Find clipipe binary
 local function find_bin()
-    if config.path and config.path ~= '' and vim.uv.fs_stat(config.path) then
-        return config.path
-    elseif vim.uv.fs_stat(cargo_release_bin) then
+    local path = config.path or vim.fn.exepath(is_win and "clipipe.exe" or "clipipe")
+    if path and path ~= '' and vim.uv.fs_stat(path) then
+        return path
+    end
+    if vim.uv.fs_stat(cargo_release_bin) then
         return cargo_release_bin
-    else
-        local path = download_path()
-        if vim.uv.fs_stat(path) then
-            return path
-        end
+    end
+    path = download_path()
+    if vim.uv.fs_stat(path) then
+        return path
     end
     return nil
 end
@@ -259,7 +259,7 @@ local function verify_bin(path)
 end
 
 -- Attempt to build clipipe binary
-local function build_bin()
+local function build_bin(opts)
     if is_wsl then
         -- It's possible to cross-compile from within WSL or invoke a host Rust
         -- installation, but this is a niche scenario that's currently not
@@ -271,8 +271,16 @@ local function build_bin()
 
     if vim.fn.exepath(cargo) ~= "" then
         vim.notify("clipipe: Building binary with cargo...", vim.log.levels.INFO)
+        local ready = false
         local proc = vim.system({ cargo, 'build', '--release' },
-            { cwd = plugin_path, stderr = true })
+            { cwd = plugin_path, stderr = true },
+            function() ready = true end
+        )
+        if opts.yield then
+            while not ready do
+                coroutine.yield("Waiting for build...")
+            end
+        end
         local res = proc:wait()
         if res.code ~= 0 then
             local stderr = res.stderr
@@ -288,7 +296,7 @@ local function build_bin()
 end
 
 -- Attempt to download prebuilt clipipe binary
-local function download_bin()
+local function download_bin(opts)
     local info = vim.uv.os_uname()
     local os = is_wsl and "windows_nt" or info.sysname:lower()
     local cpu = info.machine
@@ -304,9 +312,18 @@ local function download_bin()
 
     vim.fn.mkdir(vim.fn.fnamemodify(path, ':h'), "p")
     vim.notify("clipipe: Downloading binary...", vim.log.levels.INFO)
-    local res = vim.system(
+    local ready = false
+    local proc = vim.system(
         { curl, '--no-progress-meter', '-f', '-L', '-o', path, url },
-        { stderr = true }):wait()
+        { stderr = true },
+        function() ready = true end
+    )
+    if opts.yield then
+        while not ready do
+            coroutine.yield("Waiting for download...")
+        end
+    end
+    local res = proc:wait()
     if res.code ~= 0 then
         local stderr = res.stderr
         vim.notify(
@@ -353,30 +370,12 @@ end
 function M.setup(user_config)
     config = vim.tbl_extend("force", defaults, user_config or {})
 
-    -- Locate existing clipipe binary
-    local path = find_bin()
-    if path then
-        -- Verify it's usable
-        local ok, err = verify_bin(path)
-        if not ok then
-            vim.notify("clipipe: ignoring " .. path .. ": " .. (err or "Unknown error"),
-                vim.log.levels.WARN)
-            path = nil
-        end
-    end
-    if not path then
-        -- Try to obtain a binary
-        if config.download then
-            path = download_bin()
-        end
-        if not path and config.build then
-            path = build_bin()
-        end
-    end
-    config.path = path
-
-    if not config.path then
-        vim.notify("clipipe: Couldn't find valid clipipe binary", vim.log.levels.ERROR)
+    if config.download or config.build then
+        -- Run build now in case it hasn't happened already
+        M.build(config)
+    else
+        -- Trust user path or search without building
+        config.path = config.path or find_bin()
     end
 
     -- If setup is called more than one, terminate any background process
@@ -385,10 +384,32 @@ function M.setup(user_config)
         state.proc = nil
     end
 
-    -- Enable clipipe if possible and requested
-    if config.path and config.enable then
+    if config.enable and config.path then
         M.enable()
     end
+end
+
+-- Download or build clipipe binary
+function M.build(opts)
+    opts = opts or {}
+    -- Look for existing clipipe binary first
+    local path = find_bin()
+    if path then
+        -- Verify it's usable
+        local ok, err = verify_bin(path)
+        if not ok then
+            vim.notify("clipipe: ignoring " .. path .. ": " .. (err or "Unknown error"),
+                vim.log.levels.INFO)
+            path = nil
+        end
+    end
+    if not path and opts.download then
+        path = download_bin(opts)
+    end
+    if not path and opts.build then
+        path = build_bin(opts)
+    end
+    config.path = path
 end
 
 -- Enable plugin (configure g:clipboard)
