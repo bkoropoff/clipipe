@@ -1,24 +1,8 @@
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard};
-
-fn clipipe_bin() -> PathBuf {
-    let test_bin = std::env::current_exe().expect("Couldn't find test binary path");
-    let test_dir = test_bin
-        .parent()
-        .unwrap_or_else(|| panic!("Couldn't find test bin directory"));
-    let profile_dir = test_dir
-        .parent()
-        .unwrap_or_else(|| panic!("Couldn't find profile directory"));
-    profile_dir.join(if cfg!(target_os = "windows") {
-        "clipipe.exe"
-    } else {
-        "clipipe"
-    })
-}
 
 struct Clipipe<I, O> {
     child: Child,
@@ -60,7 +44,7 @@ impl Copy for DisplayServer {}
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn spawn(server: DisplayServer) -> Clipipe<impl BufRead, impl Write> {
-    let mut cmd = Command::new(clipipe_bin());
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_clipipe"));
     cmd.stdout(Stdio::piped()).stdin(Stdio::piped());
     match server {
         #[cfg(target_os = "linux")]
