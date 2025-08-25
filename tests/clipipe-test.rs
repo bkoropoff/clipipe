@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
+use std::sync::{Mutex, MutexGuard};
 
 fn clipipe_bin() -> PathBuf {
     let test_bin = std::env::current_exe().expect("Couldn't find test binary path");
@@ -23,6 +24,7 @@ struct Clipipe<I, O> {
     child: Child,
     input: I,
     output: O,
+    _guard: MutexGuard<'static, ()>
 }
 
 impl<I, O> Drop for Clipipe<I, O> {
@@ -43,6 +45,7 @@ impl<I: BufRead, O: Write> Clipipe<I, O> {
     }
 }
 
+#[derive(Debug, Clone)]
 enum DisplayServer {
     #[cfg(target_os = "linux")]
     Wayland,
@@ -52,7 +55,9 @@ enum DisplayServer {
     Windows,
 }
 
-const TEST_DATA: &str = "corndog";
+impl Copy for DisplayServer {}
+
+static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn spawn(server: DisplayServer) -> Clipipe<impl BufRead, impl Write> {
     let mut cmd = Command::new(clipipe_bin());
@@ -77,6 +82,7 @@ fn spawn(server: DisplayServer) -> Clipipe<impl BufRead, impl Write> {
         child,
         input,
         output,
+        _guard: TEST_MUTEX.lock().unwrap()
     }
 }
 
@@ -107,15 +113,16 @@ mod tests {
     #[apply(template::display)]
     fn copy_paste(#[case] server: DisplayServer) {
         let mut clipipe = spawn(server);
+        let data = format!("{:?}", server);
         assert_eq!(
-            clipipe.request(json!({"action": "copy", "data": TEST_DATA})),
+            clipipe.request(json!({"action": "copy", "data": data})),
             json!({"success": true})
         );
 
         let response = clipipe.request(json!({"action": "paste"}));
         println!("{}", response);
         assert_eq!(response["success"], Value::Bool(true));
-        assert_eq!(response["data"], Value::String(TEST_DATA.into()));
+        assert_eq!(response["data"], Value::String(data));
         if let Some(mime) = response.get("mime") {
             assert_eq!(mime, "text/plain")
         }

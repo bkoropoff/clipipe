@@ -41,7 +41,7 @@ jobs:
 
       # Run tests
       - name: Test
-        run: cargo test --release -- --test-threads=1
+        run: cargo test --release
 
       # Upload the executable as an artifact
       - name: Upload artifact
@@ -93,7 +93,7 @@ jobs:
           Xwayland "$DISPLAY" >xwayland.log 2>&1 &
           pids="$pids $!"
           sleep 2
-          cargo test --release --target x86_64-unknown-linux-musl -- --test-threads=1
+          cargo test --release --target x86_64-unknown-linux-musl
           rc=$?
           kill $pids
           wait
