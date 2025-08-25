@@ -24,7 +24,7 @@ struct Clipipe<I, O> {
     child: Child,
     input: I,
     output: O,
-    _guard: MutexGuard<'static, ()>
+    _guard: MutexGuard<'static, ()>,
 }
 
 impl<I, O> Drop for Clipipe<I, O> {
@@ -82,7 +82,7 @@ fn spawn(server: DisplayServer) -> Clipipe<impl BufRead, impl Write> {
         child,
         input,
         output,
-        _guard: TEST_MUTEX.lock().unwrap()
+        _guard: TEST_MUTEX.lock().unwrap(),
     }
 }
 
