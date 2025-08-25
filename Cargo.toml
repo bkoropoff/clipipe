@@ -1,6 +1,6 @@
 [package]
 name = "clipipe"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 authors = ["Brian Koropoff <bkoropoff@gmail.com>"]
 description = "A persistent clipboard provider for Neovim"
