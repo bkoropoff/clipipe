@@ -14,6 +14,17 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
+      # Cache Rust
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '~/.cargo/bin/*') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       # Set up Rust toolchain
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -21,24 +32,16 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      # Cache Rust dependencies
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
       # Build the Rust package
       - name: Build
         run: cargo build --release
         env:
           # Statically link CRT
           RUSTFLAGS: '-C target-feature=+crt-static'
+
+      # Run tests
+      - name: Test
+        run: cargo test --release -- --test-threads=1
 
       # Upload the executable as an artifact
       - name: Upload artifact
@@ -57,17 +60,16 @@ jobs:
       - name: Cache apt packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: musl-tools
+          packages: musl-tools sway xwayland
           version: 1.0
 
-      - name: Cache Cargo dependencies
+      - name: Cache Rust
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '~/.cargo/bin/*') }}
           restore-keys: |
             ${{ runner.os }}-cargo- name: Install musl-tools
 
@@ -78,6 +80,24 @@ jobs:
 
       - name: Build
         run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Test
+        run: |
+          WLR_LIBINPUT_NO_DEVICES=1
+          WLR_BACKENDS=headless
+          WAYLAND_DISPLAY=wayland-1
+          DISPLAY=:1
+          export WLR_LIBINPUT_NO_DEVICES WLR_BACKENDS WAYLAND_DISPLAY DISPLAY
+          sway --unsupported-gpu -c /dev/null -d >sway.log 2>&1 &
+          pids=$!
+          sleep 2
+          Xwayland "$DISPLAY" >xwayland.log 2>&1 &
+          pids="$pids $!"
+          sleep 2
+          cargo test --release --target x86_64-unknown-linux-musl -- --test-threads=1
+          rc=$?
+          kill $pids
+          wait
+          exit $rc
       - name: Rename binary
         run: cp -l target/x86_64-unknown-linux-musl/release/clipipe clipipe-linux-x86_64
       - name: Strip binary
