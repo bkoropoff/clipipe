@@ -74,7 +74,18 @@ The plugin attempts to locate the `clipipe` binary using the following steps:
 3. **Build from source** (Not WSL): Tries to use `cargo` to build the bundled
    source code (if `build = true`)
 
-If these fail, you will receive an error message during `setup`.
+If these all fail, you will receive an error message during `setup`.
+
+If you want to manage the binary yourself, you can build it from source and
+either put it in your `PATH` or specify `path` as a setup option.
+
+```bash
+cargo build --release
+# Output at target/release/clipipe[.exe]
+```
+
+`clipipe` is also on crates.io, but you must make sure the installed version
+matches the plugin.
 
 ### Clipboard Provider
 
