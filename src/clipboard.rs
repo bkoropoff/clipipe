@@ -1,9 +1,11 @@
+// Source of a paste
 pub enum Source {
     Default,
     Primary,
     Clipboard,
 }
 
+// Destination of a copy
 pub enum Dest {
     Default,
     Primary,
@@ -11,19 +13,26 @@ pub enum Dest {
     Both,
 }
 
+// Data returned from a paste
 pub struct Data {
     pub data: String,
+    // Mime type, if known.  Strictly advisory, only text is supported.
     pub mime: Option<String>,
 }
 
+// Information about an error
 #[derive(Debug)]
 pub enum ErrorDetail {
+    // No display server to connect to
     #[cfg(target_os = "linux")]
     NoDisplayServer,
+    // Invalid UTF-8 data received
     InvalidUtf8,
+    // Generic system error.  FIXME: make more granular
     System,
 }
 
+// Cipboard operation error
 #[derive(Debug)]
 pub struct Error {
     detail: ErrorDetail,
@@ -66,7 +75,7 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source.as_ref().map(|e| &**e)
+        self.source.as_ref().map(|e| e.as_ref())
     }
 }
 
@@ -85,6 +94,8 @@ impl std::convert::From<std::io::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub trait Backend {
+    // Copy to clipboard.  Note that data is not Data; all copies are text/plain
     fn copy(&mut self, dest: Dest, data: &str) -> Result<()>;
-    fn paste(&mut self, src: Source) -> Result<Data>;
+    // Paste from clipboard
+    fn paste(&mut self, source: Source) -> Result<Data>;
 }

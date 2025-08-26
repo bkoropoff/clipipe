@@ -5,6 +5,7 @@ use std::time::Duration;
 use crate::clipboard::{self, Data, Dest, Error, ErrorDetail, Result, Source};
 use clipboard_win::{formats, get, set, Clipboard, ErrorCode};
 
+// ErrorCode doesn't implement std::error::Error for some reason, so wrap it
 #[derive(Debug)]
 struct ErrorCodeError(ErrorCode);
 
@@ -29,10 +30,15 @@ pub struct Backend {
 impl Backend {
     pub fn new() -> Result<Backend> {
         Ok(Backend {
+            // FIXME: not the best way to plumb this setting through
             convert_line_endings: !env::args().any(|arg| arg == "--keep-line-endings"),
         })
     }
 
+    // Get clipboard lock guard.
+    //
+    // The Windows clipboard has to be globally locked to be accessed, with contention resulting in
+    // errors.  Retry with backoff.
     fn clipboard() -> Result<Clipboard> {
         let mut tries: u32 = 10;
         let mut delay: u64 = 10;
@@ -57,6 +63,7 @@ impl Backend {
         let _cb = Self::clipboard()?;
         Ok(match get(formats::Unicode) {
             Ok(data) => data,
+            // FIXME: magic constants
             Err(e) if e.raw_code() == 6 || e.raw_code() == 1168 => "".into(),
             Err(e) => return Err(e.into()),
         })

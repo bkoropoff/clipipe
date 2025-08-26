@@ -19,14 +19,17 @@ use linux as backend;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
+// FIXME: maybe use a specialized error type for some of this file
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+// Clipboard action representation
 enum Action<'a> {
     Copy(Dest, &'a str),
     Paste(Source),
     Query,
 }
 
+// Parsing from JSON
 impl<'a> Action<'a> {
     fn source(name: Option<&Value>) -> Result<Source> {
         Ok(match name {
@@ -85,12 +88,14 @@ struct Clipipe {
 }
 
 impl Clipipe {
+    // Query version number
     fn query() -> Map<String, Value> {
         let mut res = Map::new();
         res.insert("version".into(), VERSION.into());
         res
     }
 
+    // Process request object, return response object
     fn request(&mut self, obj: Map<String, Value>) -> Result<Map<String, Value>> {
         Ok(match Action::parse(&obj)? {
             Action::Query => Self::query(),
@@ -101,7 +106,6 @@ impl Clipipe {
             Action::Paste(source) => {
                 let Data { data, mime } = self.backend.paste(source)?;
                 let mut res = Map::new();
-                res.insert("success".into(), true.into());
                 res.insert("data".into(), data.into());
                 if let Some(mime) = mime {
                     res.insert("mime".into(), mime.into());
@@ -118,6 +122,7 @@ impl Clipipe {
     }
 }
 
+// Convert error to JSON, capturing source chain
 fn error_to_json<E: Error + ?Sized>(error: &E, map: &mut Map<String, Value>) {
     map.insert("message".into(), error.to_string().into());
     if let Some(source) = error.source() {
@@ -131,6 +136,7 @@ fn run() -> Result<()> {
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
 
+    // Quick query path, used to decide if binary is right version
     if env::args().any(|arg| arg == "--query") {
         writeln!(stdout, "{}", Value::Object(Clipipe::query()))?;
         return Ok(());
@@ -144,6 +150,7 @@ fn run() -> Result<()> {
             .and_then(|obj| clipipe.request(obj))
         {
             Ok(mut res) => {
+                // Add success/error discriminator
                 res.insert("success".into(), true.into());
                 res.into()
             }

@@ -37,11 +37,12 @@ impl std::convert::From<X11Error> for Error {
 }
 
 pub struct WaylandBackend {
+    // Does server support primary selection operations?
     primary_supported: bool,
 }
 
 impl WaylandBackend {
-    pub fn new() -> WaylandBackend {
+    fn new() -> WaylandBackend {
         WaylandBackend {
             primary_supported: is_primary_selection_supported().is_ok(),
         }
@@ -68,8 +69,58 @@ impl WaylandBackend {
     }
 }
 
+impl clipboard::Backend for WaylandBackend {
+    fn copy(&mut self, dest: Dest, data: &str) -> Result<()> {
+        let mut opts = Options::new();
+        opts.clipboard(self.copy_type(dest));
+        opts.copy(
+            CopySource::Bytes(data.as_bytes().into()),
+            CopyMimeType::Text,
+        )?;
+        Ok(())
+    }
+
+    fn paste(&mut self, src: Source) -> Result<Data> {
+        Ok(
+            match get_contents(
+                self.paste_type(src),
+                Seat::Unspecified,
+                // FIXME: this is not flexible enough, need to inspect offer types manually
+                PasteMimeType::TextWithPriority("text/plain"),
+            ) {
+                Ok((mut pipe, mime)) => {
+                    let mut contents = vec![];
+                    pipe.read_to_end(&mut contents)?;
+
+                    let mime = if mime.starts_with("text/_moz") {
+                        // HACK: ignore weird internal types from Firefox
+                        contents.clear();
+                        None
+                    } else {
+                        Some(mime)
+                    };
+
+                    Data {
+                        data: String::from_utf8(contents)?,
+                        mime: mime,
+                    }
+                }
+                Err(PasteError::ClipboardEmpty | PasteError::NoSeats | PasteError::NoMimeType) => {
+                    Data {
+                        data: "".into(),
+                        mime: None,
+                    }
+                }
+                Err(err) => return Err(err.into()),
+            },
+        )
+    }
+}
+
+
 pub struct X11Backend {
     backend: X11Clipboard,
+    // Cached here to allow using a slice to represent Dest::Both
     both: [Atom; 2],
 }
 
@@ -126,54 +177,6 @@ impl clipboard::Backend for X11Backend {
             data: String::from_utf8(contents)?,
             mime: None,
         })
-    }
-}
-
-impl clipboard::Backend for WaylandBackend {
-    fn copy(&mut self, dest: Dest, data: &str) -> Result<()> {
-        let mut opts = Options::new();
-        opts.clipboard(self.copy_type(dest));
-        opts.copy(
-            CopySource::Bytes(data.as_bytes().into()),
-            CopyMimeType::Text,
-        )?;
-        Ok(())
-    }
-
-    fn paste(&mut self, src: Source) -> Result<Data> {
-        Ok(
-            match get_contents(
-                self.paste_type(src),
-                Seat::Unspecified,
-                // FIXME: this is not flexible enough, need to inspect offer types manually
-                PasteMimeType::TextWithPriority("text/plain"),
-            ) {
-                Ok((mut pipe, mime)) => {
-                    let mut contents = vec![];
-                    pipe.read_to_end(&mut contents)?;
-
-                    let mime = if mime.starts_with("text/_moz") {
-                        // HACK: ignore weird internal types from Firefox
-                        contents.clear();
-                        None
-                    } else {
-                        Some(mime)
-                    };
-
-                    Data {
-                        data: String::from_utf8(contents)?,
-                        mime: mime,
-                    }
-                }
-                Err(PasteError::ClipboardEmpty | PasteError::NoSeats | PasteError::NoMimeType) => {
-                    Data {
-                        data: "".into(),
-                        mime: None,
-                    }
-                }
-                Err(err) => return Err(err.into()),
-            },
-        )
     }
 }
 
