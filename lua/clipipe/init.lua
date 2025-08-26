@@ -313,8 +313,17 @@ local function find_bin()
 end
 
 -- Query information from clipipe binary
-local function query_bin(path)
-    local res = vim.system({ path, '--query' }, { stdout = true, stderr = true }):wait()
+local function query_bin(path, opts)
+    local ready = false
+    local proc = vim.system({ path, '--query' }, { stdout = true, stderr = true },
+        function() ready = true end
+    )
+    if opts.yield then
+        while not ready do
+            coroutine.yield("Waiting for query...")
+        end
+    end
+    local res = proc:wait()
     if res.code ~= 0 then
         local stderr = res.stderr
         return nil,
@@ -325,9 +334,9 @@ local function query_bin(path)
 end
 
 -- Verify clipipe binary is usable (version matches plugin)
-local function verify_bin(path)
+local function verify_bin(path, opts)
     local ver = version()
-    local response, err = query_bin(path)
+    local response, err = query_bin(path, opts)
     if not response then
         return false, err
     end
@@ -459,18 +468,10 @@ end
 function M.setup(user_config)
     config = vim.tbl_extend("force", defaults, user_config or {})
 
-    if config.download or config.build then
+    config.path = config.path or find_bin()
+    if not config.path and config.download or config.build then
         -- Run build now in case it hasn't happened already
         M.build(config)
-    else
-        -- Trust user path or search without building
-        config.path = config.path or find_bin()
-    end
-
-    -- If setup is called more than one, terminate any background process
-    if state.proc then
-        state.proc:kill('TERM')
-        state.proc = nil
     end
 
     if config.enable and config.path then
@@ -485,7 +486,7 @@ function M.build(opts)
     local path = find_bin()
     if path then
         -- Verify it's usable
-        local ok, err = verify_bin(path)
+        local ok, err = verify_bin(path, opts)
         if not ok then
             vim.notify("clipipe: ignoring " .. path .. ": " .. (err or "Unknown error"),
                 vim.log.levels.INFO)
