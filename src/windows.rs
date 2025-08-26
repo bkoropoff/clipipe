@@ -2,8 +2,25 @@ use std::env;
 use std::thread;
 use std::time::Duration;
 
-use crate::clipboard::{self, Data, Dest, Result, Source};
-use clipboard_win::{formats, get, set, Clipboard};
+use crate::clipboard::{self, Data, Dest, Error, ErrorDetail, Result, Source};
+use clipboard_win::{formats, get, set, Clipboard, ErrorCode};
+
+#[derive(Debug)]
+struct ErrorCodeError(ErrorCode);
+
+impl std::fmt::Display for ErrorCodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for ErrorCodeError {}
+
+impl From<ErrorCode> for Error {
+    fn from(value: ErrorCode) -> Error {
+        Error::new_with_source(ErrorDetail::System, ErrorCodeError(value))
+    }
+}
 
 pub struct Backend {
     convert_line_endings: bool,
@@ -26,7 +43,7 @@ impl Backend {
                 Err(e) => {
                     tries = tries - 1;
                     if tries == 0 {
-                        return Err(e.to_string().into());
+                        return Err(e.into());
                     }
                     thread::sleep(Duration::from_millis(delay));
                     delay = (delay * 2).min(500);
@@ -41,13 +58,13 @@ impl Backend {
         Ok(match get(formats::Unicode) {
             Ok(data) => data,
             Err(e) if e.raw_code() == 6 || e.raw_code() == 1168 => "".into(),
-            Err(e) => return Err(e.to_string().into()),
+            Err(e) => return Err(e.into()),
         })
     }
 
     fn set(data: &str) -> Result<()> {
         let _cb = Self::clipboard()?;
-        Ok(set(formats::Unicode, data).map_err(|e| e.to_string())?)
+        Ok(set(formats::Unicode, data)?)
     }
 }
 
@@ -58,8 +75,7 @@ impl clipboard::Backend for Backend {
             Self::set(&data)
         } else {
             Self::set(data)
-        })
-        .map_err(|e| e.to_string())?)
+        })?)
     }
 
     fn paste(&mut self, _src: Source) -> Result<Data> {

@@ -1,10 +1,11 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::env;
+use std::error::Error;
 use std::io::{self, BufRead, Write};
 
 mod clipboard;
 
-use clipboard::{Backend, Data, Dest, Result, Source};
+use clipboard::{Backend, Data, Dest, Source};
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -17,6 +18,8 @@ mod linux;
 use linux as backend;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 enum Action<'a> {
     Copy(Dest, &'a str),
@@ -98,10 +101,10 @@ impl Clipipe {
             Action::Paste(source) => {
                 let Data { data, mime } = self.backend.paste(source)?;
                 let mut res = Map::new();
-                res.insert("success".into(), Value::Bool(true));
-                res.insert("data".into(), Value::String(data));
+                res.insert("success".into(), true.into());
+                res.insert("data".into(), data.into());
                 if let Some(mime) = mime {
-                    res.insert("mime".into(), Value::String(mime));
+                    res.insert("mime".into(), mime.into());
                 }
                 res
             }
@@ -112,6 +115,15 @@ impl Clipipe {
         Ok(Clipipe {
             backend: backend::Backend::new()?,
         })
+    }
+}
+
+fn error_to_json<E: Error + ?Sized>(error: &E, map: &mut Map<String, Value>) {
+    map.insert("message".into(), error.to_string().into());
+    if let Some(source) = error.source() {
+        let mut sub = Map::new();
+        error_to_json(&source, &mut sub);
+        map.insert("source".into(), sub.into());
     }
 }
 
@@ -127,18 +139,20 @@ fn run() -> Result<()> {
     let mut clipipe = Clipipe::new()?;
 
     for line in stdin.lines() {
-        let res = match serde_json::from_str(line?.as_ref())
+        let res: Value = match serde_json::from_str(line?.as_ref())
             .map_err(|e| e.into())
             .and_then(|obj| clipipe.request(obj))
         {
             Ok(mut res) => {
-                res.insert("success".into(), Value::Bool(true));
-                Value::Object(res)
+                res.insert("success".into(), true.into());
+                res.into()
             }
-            Err(e) => json!({
-                "success": false,
-                "message": e.to_string()
-            }),
+            Err(e) => {
+                let mut res = Map::new();
+                res.insert("success".into(), false.into());
+                error_to_json(&*e, &mut res);
+                res.into()
+            }
         };
 
         writeln!(stdout, "{}", res)?;

@@ -1,4 +1,4 @@
-use crate::clipboard::{self, Data, Dest, Result, Source};
+use crate::clipboard::{self, Data, Dest, Error, ErrorDetail, Result, Source};
 
 use std::env;
 use std::io::Read;
@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use wl_clipboard_rs::{
     copy::{
-        ClipboardType as CopyClipboardType, MimeType as CopyMimeType, Options, Source as CopySource,
+        ClipboardType as CopyClipboardType, Error as CopyError, MimeType as CopyMimeType, Options,
+        Source as CopySource,
     },
     paste::{
         get_contents, ClipboardType as PasteClipboardType, Error as PasteError,
@@ -15,7 +16,25 @@ use wl_clipboard_rs::{
     utils::is_primary_selection_supported,
 };
 
-use x11_clipboard::{Atom, Clipboard as X11Clipboard};
+use x11_clipboard::{error::Error as X11Error, Atom, Clipboard as X11Clipboard};
+
+impl std::convert::From<CopyError> for Error {
+    fn from(value: CopyError) -> Error {
+        Error::new_with_source(ErrorDetail::System, value)
+    }
+}
+
+impl std::convert::From<PasteError> for Error {
+    fn from(value: PasteError) -> Error {
+        Error::new_with_source(ErrorDetail::System, value)
+    }
+}
+
+impl std::convert::From<X11Error> for Error {
+    fn from(value: X11Error) -> Error {
+        Error::new_with_source(ErrorDetail::System, value)
+    }
+}
 
 pub struct WaylandBackend {
     primary_supported: bool,
@@ -193,7 +212,7 @@ impl Backend {
         } else if have_env_var("DISPLAY") {
             Backend::X11(X11Backend::new()?)
         } else {
-            return Err("No display server available".into());
+            return Err(Error::new(ErrorDetail::NoDisplayServer));
         })
     }
 }
