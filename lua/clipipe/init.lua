@@ -29,9 +29,6 @@ local _localappdata = nil
 -- Cache for version read from Cargo.toml
 local _version = nil
 
--- State for the background job
-local state = {}
-
 -- Default configuration
 local defaults = {
     path = nil,
@@ -39,8 +36,10 @@ local defaults = {
     keep_line_endings = false,
     -- Enable on setup
     enable = true,
+    -- Start timeout (ms)
+    start_timeout = 5000,
     -- Timeout waiting for response (ms)
-    timeout = 1000,
+    timeout = 500,
     -- Interval to poll for response (ms)
     interval = 10,
     -- Build clipipe binary from source, if necessary and possible
@@ -50,6 +49,17 @@ local defaults = {
 }
 
 local config = defaults
+
+local IN_PROGRESS = {}
+
+-- State for the background job
+local state = {
+    proc = nil,
+    buffer = {},
+    request = false,
+    response = nil,
+    callback = nil
+}
 
 -- Delayed notify
 local function notify(msg, level)
@@ -63,14 +73,40 @@ local function notify(msg, level)
     end)
 end
 
+local function reset(proc)
+    state.proc = nil
+    state.buffer = {}
+    state.request = false
+    state.response = nil
+    state.callback = nil
+
+    if proc then
+        proc:kill('TERM')
+        proc:wait(100)
+    end
+end
+
 -- Start background process if not already running
 local function start()
+    if state.proc == IN_PROGRESS then
+        local ok = vim.wait(config.timeout,
+            function() return state.proc ~= IN_PROGRESS end, config.interval)
+        if not ok then
+            return false, IN_PROGRESS
+        end
+    end
+
     if state.proc then
         return true
     end
 
     if not config.path or config.path == "" then
         return false, "Binary not found"
+    end
+
+    local timer = vim.uv.new_timer()
+    if not timer then
+        return false, "Failed to create timer"
     end
 
     local cmd = { config.path }
@@ -84,47 +120,92 @@ local function start()
             stderr = true,
             stdout = function(err, data)
                 if err then
-                    notify("clipipe: stdout error: " .. err, vim.log.levels.ERROR)
+                    notify("clipipe: stdout error: " .. err, 'ErrorMsg')
                     return
                 end
-                if data then
-                    local idx = string.find(data, "\n", 1, true)
-                    if idx then
-                        local pre = string.sub(data, 1, idx)
-                        data = string.sub(data, idx + 1)
-                        table.insert(state.buffer, pre)
-                        local stdout = table.concat(state.buffer)
-                        local parsed = vim.json.decode(stdout)
-                        state.buffer = { data }
-                        state.response = parsed
-                        state.request = false
-                    else
-                        table.insert(state.buffer, data)
+                if not data then
+                    return
+                end
+                local idx = string.find(data, "\n", 1, true)
+                if idx then
+                    if not state.request then
+                        notify("clipipe: spurious data: " .. data)
+                        return
                     end
+                    local pre = string.sub(data, 1, idx)
+                    data = string.sub(data, idx + 1)
+                    table.insert(state.buffer, pre)
+                    local stdout = table.concat(state.buffer)
+                    local parsed = vim.json.decode(stdout)
+                    state.buffer = { data }
+                    state.request = false
+                    local cb = state.callback
+                    if cb then
+                        state.callback = nil
+                        cb(parsed)
+                    else
+                        state.response = parsed
+                    end
+                else
+                    table.insert(state.buffer, data)
                 end
             end,
         },
         function(obj)
-            if obj.code ~= 0 then
-                local stderr = obj.stderr
-                notify(
-                    "clipipe: Process exited with code " ..
-                    obj.code .. (stderr and (": " .. stderr:gsub('%s*$', '')) or ""),
-                    vim.log.levels.ERROR)
-            end
-            state.proc = nil
-        end)
+            reset()
 
+            local err = nil
+            if obj.code ~= 0 then
+                local stderr = obj.stderr or "unknown"
+                err = stderr:gsub('%s*$', '') or ""
+            end
+
+            local cb = state.callback
+            if cb then
+                state.callback = nil
+                cb(nil, err)
+            else
+                notify(
+                    "clipipe: Process exited with error: " .. err,
+                    'ErrorMsg')
+            end
+        end)
     if not ok then
         return false, "Failed to start clipipe process: " .. (proc or "unknown error")
     end
 
-    state = {
-        proc = proc,
-        buffer = {},
-        request = false,
-        response = nil
-    }
+    state.proc = IN_PROGRESS
+    state.request = true
+    state.callback = function(response, err)
+        timer:stop()
+        if response then
+            state.proc = proc
+        else
+            notify("clipipe: Failed to start clipipe: " .. err, "ErrorMsg")
+        end
+    end
+
+    timer:start(config.start_timeout, 0, function()
+        if state.proc == IN_PROGRESS then
+            notify("clipipe: Timed out waiting for startup", "ErrorMsg")
+            reset(proc)
+        end
+    end)
+
+    local err
+    ok, err = pcall(function()
+        proc:write(vim.json.encode { action = "query" } .. "\n")
+    end)
+    if not ok then
+        reset(proc)
+        return nil, "Failed to send query: " .. (err or "unknown error")
+    end
+
+    ok = vim.wait(config.timeout, function() return state.proc ~= IN_PROGRESS end,
+        config.interval)
+    if not ok then
+        return false, IN_PROGRESS
+    end
 
     return true
 end
@@ -149,7 +230,7 @@ local function transact(request)
         return nil, err or "Unknown error"
     end
 
-    ok = vim.wait(config.timeout, function() return state.response end, config.interval)
+    ok = vim.wait(config.timeout, function() return state.response ~= nil end, config.interval)
     if not ok then
         if state.proc then
             state.proc:kill('TERM')
@@ -351,7 +432,11 @@ function M.copy(lines, dest)
     local request = { action = "copy", data = data, clipboard = reg_to_clipboard[dest] or dest }
     local response, err = transact(request)
     if not response then
-        notify("clipipe: copy failed: " .. (err or "Unknown error"), "ErrorMsg")
+        if err == IN_PROGRESS then
+            notify("clipipe: waiting for startup", vim.log.levels.INFO)
+        else
+            notify("clipipe: copy failed: " .. (err or "Unknown error"), "ErrorMsg")
+        end
     end
 end
 
@@ -360,7 +445,11 @@ function M.paste(source)
     local request = { action = "paste", clipboard = reg_to_clipboard[source] or source }
     local response, err = transact(request)
     if not response then
-        notify("clipipe: paste failed: " .. (err or "Unknown error"), "ErrorMsg")
+        if err == IN_PROGRESS then
+            notify("clipipe: waiting for startup", vim.log.levels.INFO)
+        else
+            notify("clipipe: paste failed: " .. (err or "Unknown error"), "ErrorMsg")
+        end
         return {}
     end
     return vim.split(response.data, "\n", { plain = true })
@@ -425,6 +514,8 @@ function M.enable()
             ["*"] = function() return M.paste('*') end,
         }
     }
+
+    start()
 end
 
 return M

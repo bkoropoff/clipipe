@@ -4,7 +4,8 @@ return {
         path = nil,
         keep_line_endings = false,
         enable = true,
-        timeout = 1000,
+        start_timeout = 5000,
+        timeout = 500,
         interval = 10,
         build = true,
         download = true
