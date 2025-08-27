@@ -117,7 +117,6 @@ impl clipboard::Backend for WaylandBackend {
     }
 }
 
-
 pub struct X11Backend {
     backend: X11Clipboard,
     // Cached here to allow using a slice to represent Dest::Both
