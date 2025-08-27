@@ -1,17 +1,23 @@
-name: Build and Release
+name: Main Workflow
 
 on:
   push:
+    branches:
+      - master
+      - dev
     tags:
-      - 'v*.*.*' # Trigger on tags like v1.0.0
-  workflow_dispatch: # Allow manual triggering
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch: ~
 
 jobs:
   build-windows:
     runs-on: windows-latest
     steps:
       # Check out the repository
-      - name: Check out code
+      - name: Check Out Code
         uses: actions/checkout@v4
 
       # Cache Rust
@@ -32,6 +38,17 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
+       # Download and unpack Neovim release, placing it in PATH
+      - name: Install Neovim
+        shell: powershell
+        run: |
+          $url = "https://github.com/neovim/neovim/releases/download/v0.11.3/nvim-win64.zip"
+          $zipPath = "$env:RUNNER_TEMP\nvim-win64.zip"
+          $extractPath = "$env:RUNNER_TEMP\"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractPath
+          Write-Output "$extractPath\nvim-win64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
       # Build the Rust package
       - name: Build
         run: cargo build --release
@@ -44,7 +61,8 @@ jobs:
         run: cargo test --release
 
       # Upload the executable as an artifact
-      - name: Upload artifact
+      - name: Upload Artifact
+        if: &is-release-ref startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: clipipe.exe
@@ -78,10 +96,22 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
+      - name: Install Neovim
+        run: |
+          set -x
+          url="https://github.com/neovim/neovim/releases/download/v0.11.3/nvim-linux-x86_64.tar.gz"
+          tarpath="$RUNNER_TEMP/nvim-linux-x86_64.tar.gz"
+          extractpath="$RUNNER_TEMP/"
+          curl --no-progress-meter -f -L -o "$tarpath" "$url"
+          tar -C "$extractpath" -x -v -f "$tarpath"
+          echo "$extractpath/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
+
       - name: Build
         run: cargo build --release --target x86_64-unknown-linux-musl
+
       - name: Test
         run: |
+          set -x
           WLR_LIBINPUT_NO_DEVICES=1
           WLR_BACKENDS=headless
           WAYLAND_DISPLAY=wayland-1
@@ -98,12 +128,14 @@ jobs:
           kill $pids
           wait
           exit $rc
-      - name: Rename binary
-        run: cp -l target/x86_64-unknown-linux-musl/release/clipipe clipipe-linux-x86_64
-      - name: Strip binary
-        run: strip clipipe-linux-x86_64
 
-      - name: Upload Linux artifact
+      - name: Rename, Strip Binary
+        run: |
+          cp target/x86_64-unknown-linux-musl/release/clipipe clipipe-linux-x86_64
+          strip clipipe-linux-x86_64
+
+      - name: Upload Artifact
+        if: *is-release-ref
         uses: actions/upload-artifact@v4
         with:
           name: clipipe-linux-x86_64
@@ -111,6 +143,7 @@ jobs:
           if-no-files-found: error
 
   create-draft-release:
+    if: *is-release-ref
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
@@ -120,6 +153,7 @@ jobs:
         with:
           path: artifacts/
           merge-multiple: true
+
       # Create a draft release
       - name: Create Draft Release
         uses: softprops/action-gh-release@v2
