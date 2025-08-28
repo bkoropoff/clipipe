@@ -183,7 +183,7 @@ local function start()
             -- Output handler
             stdout = function(err, data)
                 if err then
-                    notify_error("couldn't read stdoout", err)
+                    notify_error("couldn't read stdout", err)
                     return
                 end
                 if not data or not state.proc then
