@@ -6,7 +6,7 @@ return {
         enable = true,
         start_timeout = 5000,
         timeout = 500,
-        interval = 10,
+        interval = 50,
         build = true,
         download = true
     },

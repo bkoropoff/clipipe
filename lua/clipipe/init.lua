@@ -41,7 +41,7 @@ local defaults = {
     -- Timeout waiting for response (ms)
     timeout = 500,
     -- Interval to poll for response (ms)
-    interval = 10,
+    interval = 50,
     -- Build clipipe binary from source, if necessary and possible
     build = true,
     -- Download clipipe binary, if necessary and possible
@@ -61,15 +61,61 @@ local state = {
     callback = nil
 }
 
--- Delayed notify
+local function completed_to_source(obj)
+    local stderr = obj.stderr
+    if not stderr or stderr == '' then
+        return 'exit code ' .. obj.code
+    end
+    return stderr:gsub('%s*$', '')
+end
+
+local function canon_error(error)
+    if type(error) == 'string' then
+        return { message = error }
+    end
+    return {
+        message = error.message or "unknown error",
+        source = error.source and canon_error(error.source)
+    }
+end
+
+local function make_error(message, source)
+    return canon_error { message = message, source = source }
+end
+
+local function format_error(error)
+    local base = {error.message}
+    local source = error.source
+    if not source then
+        return {base}
+    end
+
+    local rest
+    if type(source) == 'table' then
+        rest = format_error(source)
+    else
+        rest = {{source}}
+    end
+
+    return {base, {": "}, unpack(rest)}
+end
+
+local function notify_error(message, source)
+    local error = make_error(message, source)
+
+    if config.notify_error then
+        config.notify_error(error)
+        return
+    end
+
+    vim.schedule(function()
+        vim.api.nvim_echo({{"clipipe: "}, unpack(format_error(error))}, true, {})
+    end)
+end
+
 local function notify(msg, level)
     vim.schedule(function()
-        if type(level) == 'string' then
-            -- Bypass vim.notify, go straight to messages
-            vim.api.nvim_echo({{msg, level}}, true, {})
-        else
-            vim.notify(msg, level)
-        end
+        vim.notify("clipipe: " .. msg, level)
     end)
 end
 
@@ -81,32 +127,43 @@ local function reset(proc)
     state.callback = nil
 
     if proc then
+        local timer = vim.uv.new_timer()
+        if not timer then
+            error("failed to create timer")
+        end
         proc:kill('TERM')
-        proc:wait(100)
+        timer:start(config.timeout, 0, function()
+            proc:kill('KILL')
+        end)
     end
 end
 
 -- Start background process if not already running
 local function start()
+    -- Already in progress?
     if state.proc == IN_PROGRESS then
-        local ok = vim.wait(config.timeout,
+        -- Try waiting a short interval to see if it's ready
+        local ok = vim.wait(config.interval,
             function() return state.proc ~= IN_PROGRESS end, config.interval)
         if not ok then
             return false, IN_PROGRESS
         end
     end
 
+    -- Already started
     if state.proc then
         return true
     end
 
+    -- Can't start binary if we don't have it
     if not config.path or config.path == "" then
-        return false, "Binary not found"
+        return false, "binary not found"
     end
 
+    -- Prep startup timeout timer
     local timer = vim.uv.new_timer()
     if not timer then
-        return false, "Failed to create timer"
+        return false, "failed to create timer"
     end
 
     local cmd = { config.path }
@@ -114,37 +171,56 @@ local function start()
         table.insert(cmd, "--keep-line-endings")
     end
 
+    -- Run clipipe
     local ok, proc = pcall(vim.system, cmd, {
             text = true,
             stdin = true,
             stderr = true,
+            -- Output handler
             stdout = function(err, data)
                 if err then
-                    notify("clipipe: stdout error: " .. err, 'ErrorMsg')
+                    notify_error("couldn't read stdoout", err)
                     return
                 end
-                if not data then
+                if not data or not state.proc then
                     return
                 end
+                -- Does this chunk complete a line?
                 local idx = string.find(data, "\n", 1, true)
                 if idx then
+                    -- We should only receive a response to a request
                     if not state.request then
-                        notify("clipipe: spurious data: " .. data)
+                        notify_error("spurious data", data)
                         return
                     end
+                    state.request = false
+
+                    -- Split out data after the newline
                     local pre = string.sub(data, 1, idx)
                     data = string.sub(data, idx + 1)
+                    -- Form complete line from chunks
                     table.insert(state.buffer, pre)
                     local stdout = table.concat(state.buffer)
-                    local parsed = vim.json.decode(stdout)
+                    -- Save remainder as new buffer table
                     state.buffer = { data }
-                    state.request = false
+
+                    -- Parse it
+                    local ok, response = pcall(vim.json.decode, stdout)
+                    if not ok then
+                        response = {
+                            success = false,
+                            message = "couldn't decode JSON response",
+                            source = response
+                        }
+                    end
+
+                    -- Decide what to do with it
                     local cb = state.callback
                     if cb then
                         state.callback = nil
-                        cb(parsed)
+                        cb(response)
                     else
-                        state.response = parsed
+                        state.response = response
                     end
                 else
                     table.insert(state.buffer, data)
@@ -152,42 +228,35 @@ local function start()
             end,
         },
         function(obj)
+            local cb = state.callback
             reset()
 
-            local err = nil
-            if obj.code ~= 0 then
-                local stderr = obj.stderr or "unknown"
-                err = stderr:gsub('%s*$', '') or ""
-            end
-
-            local cb = state.callback
+            local err = completed_to_source(obj)
             if cb then
-                state.callback = nil
-                cb(nil, err)
+                cb({ success = false, message = "clipipe terminated", source = err })
             else
-                notify(
-                    "clipipe: Process exited with error: " .. err,
-                    'ErrorMsg')
+                notify_error("terminated", err)
             end
         end)
     if not ok then
-        return false, "Failed to start clipipe process: " .. (proc or "unknown error")
+        return false, make_error("failed to start clipipe", proc)
     end
 
     state.proc = IN_PROGRESS
     state.request = true
-    state.callback = function(response, err)
+    state.callback = function(response)
         timer:stop()
-        if response then
+        if response.success then
             state.proc = proc
         else
-            notify("clipipe: Failed to start clipipe: " .. err, "ErrorMsg")
+            notify_error(response.message, response.source)
+            reset(proc)
         end
     end
 
     timer:start(config.start_timeout, 0, function()
         if state.proc == IN_PROGRESS then
-            notify("clipipe: Timed out waiting for startup", "ErrorMsg")
+            notify_error("timed out on start")
             reset(proc)
         end
     end)
@@ -198,10 +267,11 @@ local function start()
     end)
     if not ok then
         reset(proc)
-        return nil, "Failed to send query: " .. (err or "unknown error")
+        return nil, make_error("couldn't write request", err)
     end
 
-    ok = vim.wait(config.timeout, function() return state.proc ~= IN_PROGRESS end,
+    -- Try waiting a short interval to see if it's ready
+    ok = vim.wait(config.interval, function() return state.proc ~= IN_PROGRESS end,
         config.interval)
     if not ok then
         return false, IN_PROGRESS
@@ -217,33 +287,33 @@ local function transact(request)
         return nil, err
     end
 
+    -- Only one request can be outstanding at a time
     if state.request or state.response then
-        return nil, "Overlapped request attempted"
+        return nil, "overlapped request attempted"
     end
     state.request = true
 
+    -- Write request to pipe
     ok, err = pcall(function()
         state.proc:write(vim.json.encode(request) .. "\n")
     end)
     if not ok then
         state.request = false
-        return nil, err or "Unknown error"
+        return nil, make_error("couldn't write request", err)
     end
 
+    -- Wait for a response
     ok = vim.wait(config.timeout, function() return state.response ~= nil end, config.interval)
     if not ok then
-        if state.proc then
-            state.proc:kill('TERM')
-            state.proc:wait(100)
-        end
+        reset(state.proc)
         state.request = false
-        return nil, "Timeout waiting for response"
+        return nil, "timed out waiting for response"
     end
 
     local response = state.response
     state.response = nil
     if not response.success then
-        return nil, response.message
+        return nil, response
     end
     return response, nil
 end
@@ -287,7 +357,7 @@ local function win_localappdata()
     return _localappdata
 end
 
--- Get default clipipe.exe location
+-- Get downloaded clipipe.exe location
 local function download_path()
     if is_win then
         return win_localappdata() .. '/clipipe/clipipe.exe'
@@ -320,15 +390,12 @@ local function query_bin(path, opts)
     )
     if opts.yield then
         while not ready do
-            coroutine.yield("Waiting for query...")
+            coroutine.yield("waiting for query...")
         end
     end
     local res = proc:wait()
     if res.code ~= 0 then
-        local stderr = res.stderr
-        return nil,
-            "Process exited with code " ..
-            res.code .. (stderr and (": " .. stderr:gsub('%s*$', '')) or "")
+        return nil, make_error("failed to query clipipe", completed_to_source(res))
     end
     return vim.json.decode(res.stdout)
 end
@@ -342,8 +409,9 @@ local function verify_bin(path, opts)
     end
     if response.version ~= ver then
         return false,
-            "Binary version (" ..
-            response.version .. ") doesn't match plugin (" .. ver .. ")"
+            make_error("version mismatch",
+                "binary version (" ..
+                response.version .. ") doesn't match plugin (" .. ver .. ")")
     end
     return true
 end
@@ -360,7 +428,7 @@ local function build_bin(opts)
     local cargo = is_win and "cargo.exe" or "cargo"
 
     if vim.fn.exepath(cargo) ~= "" then
-        vim.notify("clipipe: Building binary with cargo...", vim.log.levels.INFO)
+        notify("building with cargo...", vim.log.levels.INFO)
         local ready = false
         local proc = vim.system({ cargo, 'build', '--release' },
             { cwd = plugin_path, stderr = true },
@@ -368,18 +436,14 @@ local function build_bin(opts)
         )
         if opts.yield then
             while not ready do
-                coroutine.yield("Waiting for build...")
+                coroutine.yield("waiting for build...")
             end
         end
         local res = proc:wait()
         if res.code ~= 0 then
-            local stderr = res.stderr
-            vim.notify(
-                "clipipe: Build failed with code " ..
-                res.code .. (stderr and (": " .. stderr:gsub('%s*$', '')) or ""),
-                vim.log.levels.ERROR)
+            notify_error("build failed", completed_to_source(res))
         else
-            return cargo_release_bin
+            return cargo_release_bin .. (is_win and ".exe" or "")
         end
     end
     return nil
@@ -387,39 +451,46 @@ end
 
 -- Attempt to download prebuilt clipipe binary
 local function download_bin(opts)
+    -- Grab system info
     local info = vim.uv.os_uname()
     local os = is_wsl and "windows_nt" or info.sysname:lower()
     local cpu = info.machine
+
+    -- Determine URL suffix for download
     local suffix = (system_map[os] or {})[cpu]
     if not suffix then
         -- Prebuilt binary not available
         return nil
     end
 
+    -- What to download, how, and where
     local url = github_rel_url:format(version(), suffix)
     local curl = is_win_native and "curl.exe" or "curl"
     local path = download_path()
 
+    -- Ensure destination directory exists
     vim.fn.mkdir(vim.fn.fnamemodify(path, ':h'), "p")
-    vim.notify("clipipe: Downloading binary...", vim.log.levels.INFO)
+
+    -- Do it
+    notify("downloading binary...", vim.log.levels.INFO)
     local ready = false
     local proc = vim.system(
         { curl, '--no-progress-meter', '-f', '-L', '-o', path, url },
         { stderr = true },
         function() ready = true end
     )
+
+    -- Yield if running under lazy.nvim (or otherwise asked to)
     if opts.yield then
         while not ready do
-            coroutine.yield("Waiting for download...")
+            coroutine.yield("waiting for download...")
         end
     end
+
+    -- Get process result
     local res = proc:wait()
     if res.code ~= 0 then
-        local stderr = res.stderr
-        vim.notify(
-            "clipipe: Failed to download" ..
-            (stderr and (': ' .. stderr:gsub('%s*$', '')) or ''),
-            vim.log.levels.ERROR)
+        notify_error("failed to download", completed_to_source(res))
         return nil
     end
 
@@ -430,6 +501,7 @@ local function download_bin(opts)
     return path
 end
 
+-- Register to clipboard identifier mapping
 local reg_to_clipboard = {
     ['+'] = "clipboard",
     ['*'] = "primary"
@@ -442,9 +514,9 @@ function M.copy(lines, dest)
     local response, err = transact(request)
     if not response then
         if err == IN_PROGRESS then
-            notify("clipipe: waiting for startup", vim.log.levels.INFO)
+            notify("waiting for startup", vim.log.levels.INFO)
         else
-            notify("clipipe: copy failed: " .. (err or "Unknown error"), "ErrorMsg")
+            notify_error("copy failed", err)
         end
     end
 end
@@ -455,9 +527,9 @@ function M.paste(source)
     local response, err = transact(request)
     if not response then
         if err == IN_PROGRESS then
-            notify("clipipe: waiting for startup", vim.log.levels.INFO)
+            notify("waiting for startup", vim.log.levels.INFO)
         else
-            notify("clipipe: paste failed: " .. (err or "Unknown error"), "ErrorMsg")
+            notify_error("paste failed", err)
         end
         return {}
     end
@@ -488,14 +560,16 @@ function M.build(opts)
         -- Verify it's usable
         local ok, err = verify_bin(path, opts)
         if not ok then
-            vim.notify("clipipe: ignoring " .. path .. ": " .. (err or "Unknown error"),
+            notify("ignoring " .. path .. ": " .. (err or "unknown error"),
                 vim.log.levels.INFO)
             path = nil
         end
     end
+    -- Download it?
     if not path and opts.download then
         path = download_bin(opts)
     end
+    -- Build it?
     if not path and opts.build then
         path = build_bin(opts)
     end
@@ -516,6 +590,7 @@ function M.enable()
         }
     }
 
+    -- Eagerly kick off background process
     start()
 end
 
