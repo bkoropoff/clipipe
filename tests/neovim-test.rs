@@ -11,16 +11,20 @@ fn spawn(test: &str) {
 }
 
 macro_rules! test {
-    ($name:ident) => {
+    {$name:ident} => {
         #[test]
         fn $name() {
             spawn(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/", stringify!($name), ".lua"));
         }
     };
-    ($name:ident, $($rest:ident),+) => {
+    {$name:ident, $($rest:ident),+} => {
         test!($name);
-        test!($rest);+
+        test!($($rest),+);
     }
 }
 
-test!(basic);
+test! {
+    basic,
+    startup_timeout,
+    paste_timeout
+}

@@ -48,6 +48,7 @@ dependencies = [
  "clipboard-win",
  "rstest",
  "rstest_reuse",
+ "serde",
  "serde_json",
  "wl-clipboard-rs",
  "x11-clipboard",

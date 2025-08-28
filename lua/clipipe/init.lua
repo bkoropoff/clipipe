@@ -114,6 +114,10 @@ local function notify_error(message, source)
 end
 
 local function notify(msg, level)
+    if config.notify then
+        config.notify(msg, level)
+        return
+    end
     vim.schedule(function()
         vim.notify("clipipe: " .. msg, level)
     end)
