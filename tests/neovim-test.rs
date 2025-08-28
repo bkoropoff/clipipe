@@ -1,8 +1,8 @@
 use std::process::Command;
 
-const ROOT: &'static str = env!("CARGO_MANIFEST_DIR");
-const HARNESS: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/harness.lua");
-const CLIPIPE: &'static str = env!("CARGO_BIN_EXE_clipipe");
+const ROOT: &str = env!("CARGO_MANIFEST_DIR");
+const HARNESS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/harness.lua");
+const CLIPIPE: &str = env!("CARGO_BIN_EXE_clipipe");
 
 fn spawn(test: &str) {
     let mut cmd = Command::new("nvim");
