@@ -17,7 +17,7 @@ mod linux;
 #[cfg(target_os = "linux")]
 use linux as backend;
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // FIXME: maybe use a specialized error type for some of this file
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -34,7 +34,7 @@ impl<'a> Action<'a> {
     fn source(name: Option<&Value>) -> Result<Source> {
         Ok(match name {
             None => Source::Default,
-            Some(&Value::String(ref name)) => match name.as_ref() {
+            Some(Value::String(name)) => match name.as_ref() {
                 "default" => Source::Default,
                 "clipboard" => Source::Clipboard,
                 "primary" => Source::Primary,
@@ -47,7 +47,7 @@ impl<'a> Action<'a> {
     fn dest(name: Option<&Value>) -> Result<Dest> {
         Ok(match name {
             None => Dest::Default,
-            Some(&Value::String(ref name)) => match name.as_ref() {
+            Some(Value::String(name)) => match name.as_ref() {
                 "default" => Dest::Default,
                 "clipboard" => Dest::Clipboard,
                 "primary" => Dest::Primary,
@@ -58,10 +58,10 @@ impl<'a> Action<'a> {
         })
     }
 
-    fn data<'b>(data: Option<&'b Value>) -> Result<&'b str> {
+    fn data(data: Option<&Value>) -> Result<&str> {
         Ok(match data {
             None => return Err("Request is missing `data`".into()),
-            Some(&Value::String(ref data)) => data.as_ref(),
+            Some(Value::String(data)) => data.as_ref(),
             Some(value) => return Err(format!("Invalid clipboard data: {}", value).into()),
         })
     }
@@ -69,7 +69,7 @@ impl<'a> Action<'a> {
     pub fn parse(doc: &'a Map<String, Value>) -> Result<Action<'a>> {
         Ok(match doc.get("action") {
             None => return Err("No action specified".into()),
-            Some(&Value::String(ref name)) => match name.as_ref() {
+            Some(Value::String(name)) => match name.as_ref() {
                 "copy" => Action::Copy(
                     Self::dest(doc.get("clipboard"))?,
                     Self::data(doc.get("data"))?,

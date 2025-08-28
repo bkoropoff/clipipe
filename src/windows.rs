@@ -47,7 +47,7 @@ impl Backend {
             break Ok(match Clipboard::new() {
                 Ok(cb) => cb,
                 Err(e) => {
-                    tries = tries - 1;
+                    tries -= 1;
                     if tries == 0 {
                         return Err(e.into());
                     }
@@ -77,12 +77,12 @@ impl Backend {
 
 impl clipboard::Backend for Backend {
     fn copy(&mut self, _dest: Dest, data: &str) -> Result<()> {
-        Ok((if self.convert_line_endings {
+        if self.convert_line_endings {
             let data = data.replace("\n", "\r\n");
             Self::set(&data)
         } else {
             Self::set(data)
-        })?)
+        }
     }
 
     fn paste(&mut self, _src: Source) -> Result<Data> {
@@ -91,7 +91,7 @@ impl clipboard::Backend for Backend {
             data = data.replace("\r\n", "\n");
         }
         Ok(Data {
-            data: data,
+            data,
             mime: None,
         })
     }

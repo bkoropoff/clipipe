@@ -102,7 +102,7 @@ impl clipboard::Backend for WaylandBackend {
 
                     Data {
                         data: String::from_utf8(contents)?,
-                        mime: mime,
+                        mime,
                     }
                 }
                 Err(PasteError::ClipboardEmpty | PasteError::NoSeats | PasteError::NoMimeType) => {
@@ -130,7 +130,7 @@ impl X11Backend {
         let clipboard = backend.setter.atoms.clipboard;
 
         Ok(X11Backend {
-            backend: backend,
+            backend,
             both: [primary, clipboard],
         })
     }
@@ -181,7 +181,7 @@ impl clipboard::Backend for X11Backend {
 
 pub enum Backend {
     Wayland(WaylandBackend),
-    X11(X11Backend),
+    X11(Box<X11Backend>),
 }
 
 impl clipboard::Backend for Backend {
@@ -202,7 +202,7 @@ impl clipboard::Backend for Backend {
 
 fn have_env_var(var: &str) -> bool {
     match env::var(var) {
-        Ok(v) => v.len() != 0,
+        Ok(v) => !v.is_empty(),
         _ => false,
     }
 }
@@ -212,7 +212,7 @@ impl Backend {
         Ok(if have_env_var("WAYLAND_DISPLAY") {
             Backend::Wayland(WaylandBackend::new())
         } else if have_env_var("DISPLAY") {
-            Backend::X11(X11Backend::new()?)
+            Backend::X11(X11Backend::new()?.into())
         } else {
             return Err(Error::new(ErrorDetail::NoDisplayServer));
         })
