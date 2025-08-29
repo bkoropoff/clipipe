@@ -17,12 +17,12 @@ local init_lua_path = debug.getinfo(1, "S").source:sub(2)
 local plugin_path = vim.fs.normalize(vim.fs.dirname(init_lua_path) .. '/../..')
 -- Our Cargo.toml
 local cargo_toml_path = plugin_path .. '/Cargo.toml'
--- Where cargo will put clipipe binary (on Linux)
-local cargo_release_bin = plugin_path .. '/target/release/clipipe'
 -- Platform checks
 local is_win_native = vim.fn.has("win32") == 1
 local is_wsl = vim.fn.has("wsl") == 1
 local is_win = is_win_native or is_wsl
+-- Where cargo will put clipipe binary
+local cargo_release_bin = plugin_path .. '/target/release/clipipe' .. (is_win_native and ".exe" or "")
 
 -- Cache for LOCALAPPDATA on Windows
 local _localappdata = nil
@@ -386,28 +386,65 @@ local function find_bin()
     return nil
 end
 
--- Query information from clipipe binary
-local function query_bin(path, opts)
-    local ready = false
-    local proc = vim.system({ path, '--query' }, { stdout = true, stderr = true },
-        function() ready = true end
-    )
-    if opts.yield then
-        while not ready do
-            coroutine.yield("waiting for query...")
+local function system(cfg)
+    local opts = { cwd = cfg.cwd }
+    for _, key in ipairs { 'stdout', 'stderr' } do
+        if cfg[key] == 'notify' then
+            opts[key] = function(err, data)
+                if err then
+                    notify_error("couldn't read output", err)
+                    return
+                end
+                if not data then
+                    return
+                end
+                local parts = vim.split(data, "\n", { plain = true, trimempty = true })
+                notify(vim.trim(parts[#parts]))
+            end
+        elseif cfg[key] then
+            opts[key] = true
         end
     end
-    local res = proc:wait()
-    if res.code ~= 0 then
-        return nil, make_error("failed to query clipipe", completed_to_source(res))
+
+    opts.stderr = opts.stderr or true
+
+    local cr = coroutine.running()
+
+    local ok = pcall(function()
+        vim.system(cfg.command, opts,
+            function(res)
+                if res.code ~= 0 then
+                    local err = make_error("error running " .. vim.inspect(cfg.command),
+                        completed_to_source(res))
+                    vim.schedule(function() coroutine.resume(cr, nil, err) end)
+                else
+                    vim.schedule(function() coroutine.resume(cr, res) end)
+                end
+            end)
+    end)
+    if not ok then
+        return nil, make_error("failed to run " .. vim.inspect(cfg.command))
     end
+
+    return coroutine.yield()
+end
+
+-- Query information from clipipe binary
+local function query_bin(path)
+    local res, err = system {
+        command = { path, '--query' }
+    }
+    if not res then
+        return nil, err
+    end
+
     return vim.json.decode(res.stdout)
 end
 
 -- Verify clipipe binary is usable (version matches plugin)
-local function verify_bin(path, opts)
+local function verify_bin(path)
     local ver = version()
-    local response, err = query_bin(path, opts)
+    local response, err = query_bin(path)
     if not response then
         return false, err
     end
@@ -421,7 +458,7 @@ local function verify_bin(path, opts)
 end
 
 -- Attempt to build clipipe binary
-local function build_bin(opts)
+local function build_bin()
     if is_wsl then
         -- It's possible to cross-compile from within WSL or invoke a host Rust
         -- installation, but this is a niche scenario that's currently not
@@ -431,30 +468,27 @@ local function build_bin(opts)
 
     local cargo = is_win and "cargo.exe" or "cargo"
 
-    if vim.fn.exepath(cargo) ~= "" then
-        notify("building with cargo...", vim.log.levels.INFO)
-        local ready = false
-        local proc = vim.system({ cargo, 'build', '--release' },
-            { cwd = plugin_path, stderr = true },
-            function() ready = true end
-        )
-        if opts.yield then
-            while not ready do
-                coroutine.yield("waiting for build...")
-            end
-        end
-        local res = proc:wait()
-        if res.code ~= 0 then
-            notify_error("build failed", completed_to_source(res))
-        else
-            return cargo_release_bin .. (is_win and ".exe" or "")
-        end
+    if vim.fn.exepath(cargo) == "" then
+        return nil
     end
-    return nil
+
+    notify("building with cargo")
+
+    local ok, err = system {
+        command = { cargo, "build", "--release" },
+        stderr = 'notify',
+        cwd = plugin_path
+    }
+    if not ok then
+        notify_error("failed to build", err)
+        return nil
+    end
+    notify("build successful")
+    return cargo_release_bin
 end
 
 -- Attempt to download prebuilt clipipe binary
-local function download_bin(opts)
+local function download_bin()
     -- Grab system info
     local info = vim.uv.os_uname()
     local os = is_wsl and "windows_nt" or info.sysname:lower()
@@ -475,26 +509,15 @@ local function download_bin(opts)
     -- Ensure destination directory exists
     vim.fn.mkdir(vim.fn.fnamemodify(path, ':h'), "p")
 
+
     -- Do it
-    notify("downloading binary...", vim.log.levels.INFO)
-    local ready = false
-    local proc = vim.system(
-        { curl, '--no-progress-meter', '-f', '-L', '-o', path, url },
-        { stderr = true },
-        function() ready = true end
-    )
-
-    -- Yield if running under lazy.nvim (or otherwise asked to)
-    if opts.yield then
-        while not ready do
-            coroutine.yield("waiting for download...")
-        end
-    end
-
-    -- Get process result
-    local res = proc:wait()
-    if res.code ~= 0 then
-        notify_error("failed to download", completed_to_source(res))
+    notify("downloading binary")
+    local ok, err = system {
+        command = { curl, '--no-progress-meter', '-f', '-L', '-o', path, url },
+        status = "downloading clipipe binary"
+    }
+    if not ok then
+        notify_error("failed to download", err)
         return nil
     end
 
@@ -502,7 +525,41 @@ local function download_bin(opts)
         vim.uv.fs_chmod(path, 448)
     end
 
+    notify("download successful")
     return path
+end
+
+local function build()
+    if state.proc then
+        -- Rebuilding while running is a bad idea, defer to next restart
+        return
+    end
+
+    local cr = coroutine.create(function()
+        -- Look for existing clipipe binary first
+        local path = find_bin()
+        if path then
+            -- Verify it's usable
+            local ok, err = verify_bin(path)
+            if not ok then
+                notify("ignoring " .. path .. ": " .. (err or "unknown error"),
+                    vim.log.levels.INFO)
+                path = nil
+            end
+        end
+        -- Download it?
+        if not path and config.download then
+            path = download_bin()
+        end
+        -- Build it?
+        if not path and config.build then
+            path = build_bin()
+        end
+        config.path = path
+        state.proc = nil
+    end)
+    state.proc = IN_PROGRESS
+    vim.schedule(function() coroutine.resume(cr) end)
 end
 
 -- Register to clipboard identifier mapping
@@ -547,43 +604,12 @@ function M.setup(user_config)
     config.path = config.path or find_bin()
     if not config.path and config.download or config.build then
         -- Run build now in case it hasn't happened already
-        M.build(config)
+        build()
     end
 
-    if config.enable and config.path then
+    if config.enable then
         M.enable()
     end
-end
-
--- Download or build clipipe binary
-function M.build(opts)
-    opts = opts or config
-
-    if state.proc then
-        -- Rebuilding while running is a bad idea, defer to next restart
-        return
-    end
-
-    -- Look for existing clipipe binary first
-    local path = find_bin()
-    if path then
-        -- Verify it's usable
-        local ok, err = verify_bin(path, opts)
-        if not ok then
-            notify("ignoring " .. path .. ": " .. (err or "unknown error"),
-                vim.log.levels.INFO)
-            path = nil
-        end
-    end
-    -- Download it?
-    if not path and opts.download then
-        path = download_bin(opts)
-    end
-    -- Build it?
-    if not path and opts.build then
-        path = build_bin(opts)
-    end
-    config.path = path
 end
 
 -- Enable plugin (configure g:clipboard)
