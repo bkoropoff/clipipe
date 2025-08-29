@@ -557,7 +557,13 @@ end
 
 -- Download or build clipipe binary
 function M.build(opts)
-    opts = opts or {}
+    opts = opts or config
+
+    if state.proc then
+        -- Rebuilding while running is a bad idea, defer to next restart
+        return
+    end
+
     -- Look for existing clipipe binary first
     local path = find_bin()
     if path then
