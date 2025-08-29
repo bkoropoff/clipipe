@@ -9,10 +9,5 @@ return {
         interval = 50,
         build = true,
         download = true
-    },
-    build = function(plugin)
-        local lazy_plugin = require 'lazy.core.plugin'
-        local opts = vim.tbl_extend('keep', { yield = true }, lazy_plugin.values(plugin, "opts") or {})
-        require 'clipipe'.build(opts)
-    end
+    }
 }
