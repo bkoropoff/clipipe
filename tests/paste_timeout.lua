@@ -1,20 +1,20 @@
 
 mock {
-    handlers = {
-        query = {
-            response = {
-                success = true,
-                version = vim.env.CARGO_PKG_VERSION,
-            }
-        },
-        paste = {
-            response = {
-                success = true,
-                data = "foobar",
-            },
-            delay = 1000
-        }
+  handlers = {
+    query = {
+      response = {
+        success = true,
+        version = vim.env.CARGO_PKG_VERSION,
+      }
+    },
+    paste = {
+      response = {
+        success = true,
+        data = "foobar",
+      },
+      delay = 1000
     }
+  }
 }
 
 require 'clipipe'.paste("*")
