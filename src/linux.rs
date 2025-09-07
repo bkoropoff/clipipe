@@ -101,7 +101,7 @@ impl clipboard::Backend for WaylandBackend {
                     };
 
                     Data {
-                        data: String::from_utf8(contents)?,
+                        data: String::from_utf8_lossy(&contents).into(),
                         mime,
                     }
                 }
@@ -173,7 +173,7 @@ impl clipboard::Backend for X11Backend {
             Duration::from_millis(100),
         )?;
         Ok(Data {
-            data: String::from_utf8(contents)?,
+            data: String::from_utf8_lossy(&contents).into(),
             mime: None,
         })
     }
