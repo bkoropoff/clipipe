@@ -11,6 +11,10 @@ on:
       - master
   workflow_dispatch: ~
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -129,6 +133,7 @@ jobs:
           exit $rc
 
       - name: Rename, Strip Binary
+        if: *is-release-ref
         run: |
           cp target/x86_64-unknown-linux-musl/release/clipipe clipipe-linux-x86_64
           strip clipipe-linux-x86_64
@@ -141,8 +146,9 @@ jobs:
           path: clipipe-linux-x86_64
           if-no-files-found: error
 
-  create-draft-release:
+  draft-release:
     if: *is-release-ref
+    environment: Publish
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
@@ -161,3 +167,19 @@ jobs:
           draft: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    if: *is-release-ref
+    environment: Publish
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Authenticate to crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish to crates.io
+        run: cargo publish --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
