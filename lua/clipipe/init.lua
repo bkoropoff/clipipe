@@ -83,9 +83,14 @@ local function make_error(message, source)
   return canon_error { message = message, source = source }
 end
 
-local function format_error(error)
-  local base = {error.message}
-  local source = error.source
+local function format_error(err)
+  if err == nil then
+    err = { message = "unknown" }
+  elseif type(err) == 'string' then
+    err = { message = err }
+  end
+  local base = {err.message}
+  local source = err.source
   if not source then
     return {base}
   end
@@ -542,7 +547,7 @@ local function build()
       -- Verify it's usable
       local ok, err = verify_bin(path)
       if not ok then
-        notify("ignoring " .. path .. ": " .. (err or "unknown error"),
+        notify("ignoring " .. path .. ": " .. canon_error(err).message,
           vim.log.levels.INFO)
         path = nil
       end
@@ -559,7 +564,12 @@ local function build()
     state.proc = nil
   end)
   state.proc = IN_PROGRESS
-  vim.schedule(function() coroutine.resume(cr) end)
+  vim.schedule(function()
+    local ok, err = coroutine.resume(cr)
+    if not ok then
+      notify_error("build coroutine died", err)
+    end
+  end)
 end
 
 -- Register to clipboard identifier mapping
