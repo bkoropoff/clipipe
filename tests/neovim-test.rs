@@ -7,6 +7,7 @@ const CLIPIPE: &str = env!("CARGO_BIN_EXE_clipipe");
 fn spawn(test: &str) {
     let mut cmd = Command::new("nvim");
     cmd.args(["--clean", "--headless", "-l", HARNESS, ROOT, CLIPIPE, test]);
+    cmd.stdout(std::process::Stdio::null());
     assert!(cmd.status().expect("Failed to start neovim").success());
 }
 

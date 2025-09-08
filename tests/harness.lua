@@ -4,10 +4,11 @@ local test = arg[3]
 
 local errors = {}
 
-local function notify(message, level)
-  if vim.env.CLIPIPE_TEST_VERBOSE then
-    print(message)
-  end
+local stderr = vim.uv.new_pipe();
+stderr:open(2)
+
+function _G.notify(message, level)
+    vim.uv.write(stderr, message .. "\n")
 end
 
 local function notify_error(error)
@@ -22,7 +23,7 @@ local defaults = {
   start_timeout = 100,
   timeout = 100,
   notify_error = notify_error,
-  notify = notify
+  notify = _G.notify
 }
 
 -- Add plugin root to runtime path
