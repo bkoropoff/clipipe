@@ -54,9 +54,10 @@ If you haven't already, set the `clipboard` option to `unnamed` or
 vim.o.clipboard = 'unnamedplus'
 ```
 
-The distinction is only relevant for X11, where `unnamed` corresponds to the
-"primary" (middle-click paste) and `unnamedplus` correponds to the "clipboard"
-(Ctrl-V paste).
+`unnamed` corresponds to the "primary" (middle-click paste) and `unnamedplus`
+correponds to the "clipboard" (Ctrl-V paste).  This distinction is only
+relevant for X11 and Wayland (with compositors that support the primary
+selection extension); there is no difference on Windows or WSL.
 
 See the Neovim documentation for more details.
 
