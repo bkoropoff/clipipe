@@ -67,20 +67,6 @@ jobs:
       - name: Test
         run: cargo test --release
 
-      - name: Hash Rust artifacts
-        shell: powershell
-        run: |
-          $content = Get-ChildItem -Path @("$env:USERPROFILE\.cargo\.crates.toml", "$env:USERPROFILE\.cargo\.crates2.json", "$env:USERPROFILE\.cargo\bin", "$env:USERPROFILE\.cargo\registry\index", "$env:USERPROFILE\.cargo\registry\cache", "$env:USERPROFILE\.cargo\git\db", "$env:RUSTUP_DIR", "target") -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object { 
-              $hash = (Get-FileHash -Algorithm MD5 -Path $_.FullName).Hash.ToLower()
-              "$hash  $($_.FullName)"
-          }
-          $writer = [System.IO.StreamWriter]::new('rust-hash', $false, [System.Text.Encoding]::UTF8)
-          $writer.Write(($content -join "`n"))
-          $writer.Close()
-          $writer.Dispose()
-          $envHash = (Get-FileHash -Algorithm MD5 -Path rust-hash).Hash.ToLower()
-          "RUST_HASH=$envHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       - &save-rust
         name: Save Rust cache
         uses: actions/cache/save@v4
@@ -94,7 +80,7 @@ jobs:
             ~/.cargo/git/db/
             ~/.rustup
             target/
-          key: ${{ runner.os }}-rust-${{ env.RUST_HASH }}
+          key: ${{ runner.os }}-rust-${{ github.run_id }}
 
       # Upload the executable as an artifact
       - name: Upload Artifact
@@ -156,11 +142,6 @@ jobs:
           kill $pids
           wait
           exit $rc
-
-      - name: Hash Rust artifacts
-        run: |
-          find ~/.cargo/.crates.toml ~/.cargo/.crates2.json ~/.cargo/bin/ ~/.cargo/registry/index/ ~/.cargo/registry/cache/ ~/.cargo/git/db/ ~/.rustup target -type f -print0 | xargs -0 md5sum > rust-hash
-          echo RUST_HASH=`md5sum rust-hash | cut -d' ' -f 1` >> "$GITHUB_ENV"
 
       - *save-rust
 
