@@ -20,7 +20,8 @@ communicates over pipes with a persistent background process.
 
 ## Installation
 
-> **Note** \U0001f4dd
+> ### **Note** 📝
+>
 > Clipipe uses a background helper executable which it will attempt to download
 or build as needed.  This might cause Windows Defender or other antivirus
 software to delay startup and display a message the first time it's run.  See
