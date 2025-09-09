@@ -35,7 +35,7 @@ Install this repository with your manager of choice.  For example, using
 ```lua
 require 'lazy'.setup {
   {
-    'bkoropoff/clipipe.nvim',
+    'bkoropoff/clipipe',
     opts = {
       -- Optional configuration, defaults shown here:
       path = nil, -- clipipe binary
