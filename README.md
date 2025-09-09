@@ -20,6 +20,12 @@ communicates over pipes with a persistent background process.
 
 ## Installation
 
+> **Note** \U0001f4dd
+> Clipipe uses a background helper executable which it will attempt to download
+or build as needed.  This might cause Windows Defender or other antivirus
+software to delay startup and display a message the first time it's run.  See
+below for other options.
+
 ### Plugin
 
 Install this repository with your manager of choice.  For example, using
@@ -36,7 +42,7 @@ require 'lazy'.setup {
       enable = true, -- Automatically set g:clipboard to enable clipipe
       start_timeout = 5000, -- Timeout for starting background process (ms)
       timeout = 500, -- Timeout for responses from background process (ms)
-      interval = 10, -- Polling interval for responses (ms)
+      interval = 50, -- Polling interval for responses (ms)
       download = true, -- Download pre-built binary if needed
       build = true, -- Build from source if needed
     }
