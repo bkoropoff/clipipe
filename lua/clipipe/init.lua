@@ -358,7 +358,12 @@ end
 
 -- Get value of Windows environment variable from within WSL
 local function wsl_env_get(var)
-  local res = vim.system({ 'cmd.exe', '/c', 'echo %' .. var .. '%' }, { stdout = true })
+  local cmd = 'cmd.exe'
+  if vim.fn.exepath(cmd) == "" then
+    -- Not on PATH when wsl.conf disables interop.appendWindowsPath
+    cmd = '/mnt/c/Windows/System32/cmd.exe'
+  end
+  local res = vim.system({ cmd, '/c', 'echo %' .. var .. '%' }, { stdout = true })
     :wait()
   return res.stdout:gsub("%s+$", "")
 end
