@@ -47,7 +47,6 @@ require 'lazy'.setup {
       download = true, -- Download pre-built binary if needed
       build = true, -- Build from source if needed
     }
-    end,
   },
 }
 ```
