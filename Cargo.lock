@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "clipipe"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "clipboard-win",
  "rstest",
